@@ -4,6 +4,7 @@ import { loadConfig } from "./config.js";
 import { classifyFileWithJev } from "./classifier.js";
 import { extractTargetPaths } from "./parser.js";
 import { registerDevModeCommands } from "./commands.js";
+import { getDevModeSystemPrompt } from "./prompt.js";
 
 export default function (pi: ExtensionAPI): void {
   pi.setLabel("DevMode Guard");
@@ -17,8 +18,33 @@ export default function (pi: ExtensionAPI): void {
     state.setMode(cfg.mode);
     state.resetSession();
 
+    if (ctx.hasUI) {
+      ctx.ui.setStatus("devmode", `[DEV: ${cfg.mode.toUpperCase()}]`);
+    }
+
     if (ctx.agent?.kind === "main") {
       ctx.ui.notify(`DevMode Guard active: [${cfg.mode.toUpperCase()}] mode`, "info");
+    }
+  });
+
+  // Inject system prompt boundaries before prompt execution
+  pi.on("before_agent_start", async (event) => {
+    const currentMode = state.getMode();
+    const restriction = getDevModeSystemPrompt(currentMode);
+    if (restriction) {
+      return {
+        systemPrompt: [...event.systemPrompt, restriction],
+      };
+    }
+  });
+
+  // Propagate dev mode boundary into spawned subagents
+  pi.on("before_subagent_spawn", async (event) => {
+    const currentMode = state.getMode();
+    if (currentMode !== "both") {
+      return {
+        note: `Enforcing [${currentMode.toUpperCase()}] mode constraints on subagent`,
+      };
     }
   });
 
@@ -28,14 +54,17 @@ export default function (pi: ExtensionAPI): void {
   });
 
   // Clean up on session shutdown
-  pi.on("session_shutdown", () => {
+  pi.on("session_shutdown", (_event, ctx) => {
+    if (ctx.hasUI) {
+      ctx.ui.setStatus("devmode", "");
+    }
     state.resetSession();
   });
 
-  // Intercept tool calls (edit and write)
+  // Intercept tool calls (edit, write, and mutating bash commands)
   pi.on("tool_call", async (event, ctx) => {
     const toolName = event.toolName;
-    if (toolName !== "edit" && toolName !== "write") {
+    if (toolName !== "edit" && toolName !== "write" && toolName !== "bash") {
       return;
     }
 
@@ -80,7 +109,7 @@ export default function (pi: ExtensionAPI): void {
         const modeType = currentMode.toUpperCase();
 
         const choice = await ctx.ui.select(
-          `DevMode Guard: Agent is attempting to modify a ${violationType} file in ${modeType} mode.\nFile: ${filePath}\nWhat would you like to do?`,
+          `DevMode Guard: Agent is attempting to modify a ${violationType} file/target in ${modeType} mode.\nTarget: ${filePath} (via ${toolName})\nWhat would you like to do?`,
           [
             "1. Block (Stop modification)",
             "2. Allow for this prompt only",
@@ -103,6 +132,7 @@ export default function (pi: ExtensionAPI): void {
 
         if (choice?.startsWith("4")) {
           state.setMode("both");
+          ctx.ui.setStatus("devmode", "[DEV: BOTH]");
           ctx.ui.notify("Switched development mode to BOTH.", "info");
           return;
         }
@@ -110,14 +140,14 @@ export default function (pi: ExtensionAPI): void {
         // Default or choice 1 -> Block
         return {
           block: true,
-          reason: `Blocked by DevMode Guard: Modifying ${category} file (${filePath}) is forbidden in ${currentMode} mode.`,
+          reason: `Blocked by DevMode Guard: Modifying ${category} file/target (${filePath}) is forbidden in ${currentMode} mode. Please create mock fixtures or adapt within the active mode.`,
         };
       }
 
       // Non-interactive fallback: strictly block
       return {
         block: true,
-        reason: `Blocked by DevMode Guard: Modifying ${category} file (${filePath}) is forbidden in ${currentMode} mode.`,
+        reason: `Blocked by DevMode Guard: Modifying ${category} file/target (${filePath}) is forbidden in ${currentMode} mode. Please create mock fixtures or adapt within the active mode.`,
       };
     }
   });

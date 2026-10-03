@@ -1,7 +1,8 @@
 import { describe, it } from "node:test";
 import assert from "node:assert";
-import { extractTargetPaths } from "./parser.js";
+import { extractTargetPaths, extractPathsFromBash } from "./parser.js";
 import { state } from "./state.js";
+import { getDevModeSystemPrompt } from "./prompt.js";
 
 describe("extractTargetPaths", () => {
   it("extracts path from write tool", () => {
@@ -23,6 +24,32 @@ PUT 5.=5:
       "src/controllers/UserController.php",
       "views/user/index.php",
     ]);
+  });
+
+  it("extracts paths from shell bash commands", () => {
+    const bash1 = "sed -i 's/foo/bar/g' code/core/controllers/TestController.php";
+    const paths1 = extractPathsFromBash(bash1);
+    assert.ok(paths1.includes("code/core/controllers/TestController.php"));
+
+    const bash2 = "echo 'data' > src/output.json && rm -f old_server.py";
+    const paths2 = extractPathsFromBash(bash2);
+    assert.ok(paths2.includes("src/output.json"));
+    assert.ok(paths2.includes("old_server.py"));
+  });
+});
+
+describe("DevMode prompt guidance", () => {
+  it("generates correct system prompts per mode", () => {
+    const fePrompt = getDevModeSystemPrompt("frontend");
+    assert.ok(fePrompt?.includes("FRONTEND mode"));
+    assert.ok(fePrompt?.includes("MUST NOT modify server-side logic"));
+
+    const bePrompt = getDevModeSystemPrompt("backend");
+    assert.ok(bePrompt?.includes("BACKEND mode"));
+    assert.ok(bePrompt?.includes("MUST NOT modify frontend UI views"));
+
+    const bothPrompt = getDevModeSystemPrompt("both");
+    assert.strictEqual(bothPrompt, undefined);
   });
 });
 

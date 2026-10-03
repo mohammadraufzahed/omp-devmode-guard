@@ -6,55 +6,44 @@ Instead of rigid, brittle hardcoded path lists, `omp-devmode-guard` leverages th
 
 ---
 
-## Features
+## What It Does
 
-- **Dynamic Boundary Detection with Jev**: Classifies arbitrary file trees accurately without hardcoded rules.
-- **Strict Enforcement on Modifications**: Intercepts `edit` and `write` tool calls before execution.
-- **Interactive Violation Handling**:
-  - `Block`: Denies the modification and halts agent action.
-  - `Allow for this prompt only`: Grants permission for the current prompt turn, resetting automatically on `turn_end`.
-  - `Allow for this session`: Permits modifying the file for the active session.
-  - `Switch mode to BOTH`: Switches development mode to `both` dynamically.
-- **Persistent Cache**: File classifications are cached persistently in `~/.omp/devmode-cache.json` for lightning-fast zero-latency repeat evaluations.
-- **Slash Commands**: Quick mode switching and status via `/devmode`.
+1. **System Prompt & Self-Restraint (`before_agent_start`)**:
+   - Injects explicit mode instructions into the LLM context.
+   - In `frontend` mode, tells the agent not to attempt backend edits and to use mock fixtures/stubs instead.
 
----
+2. **Tool & Shell Guard (`tool_call`)**:
+   - Inspects `edit`, `write`, and mutating `bash` shell commands (`sed -i`, `rm`, `mv`, `git restore`, `>`).
+   - Blocks unauthorized mutations before execution begins.
 
-## Installation & Setup in omp
+3. **Subagent Enforcement (`before_subagent_spawn`)**:
+   - Propagates boundary restrictions to spawned subagents (`task`, `scout`, `coder`).
 
-Add the extension to your omp configuration (`~/.omp/agent/config.json` or project `.omp/` config):
+4. **TUI Status Line Integration**:
+   - Renders live mode status indicator directly in omp: `[DEV: FRONTEND]`, `[DEV: BACKEND]`, or `[DEV: BOTH]`.
 
-```json
-{
-  "extensions": [
-    "D:/Workspace/Personal/omp-devmode-guard/dist/index.js"
-  ]
-}
-```
+5. **Diff & Pre-Commit Verification (`/devmode verify`)**:
+   - Analyzes `git diff HEAD` using Jev to verify no forbidden boundary files were changed before committing.
 
-Or install it locally:
+6. **Interactive Overrides**:
+   - `1. Block`: Stops the agent.
+   - `2. Allow for this prompt only`: Pass expires as soon as the prompt finishes (`turn_end`).
+   - `3. Allow for this session`: Pass stays valid for the active session.
+   - `4. Switch mode to BOTH`: Unlocks all modifications.
 
-```bash
-cd D:/Workspace/Personal/omp-devmode-guard
-npm install
-npm run build
-```
+7. **Persistent Classification Cache**:
+   - Caches Jev judgments in `~/.omp/devmode-cache.json` for zero-latency repeat evaluations.
 
 ---
 
 ## Commands
 
-- `/devmode status` — Check active development mode and Jev judge status.
-- `/devmode frontend` — Restrict modifications to frontend files only.
-- `/devmode backend` — Restrict modifications to backend files only.
-- `/devmode both` — Allow both frontend and backend modifications.
-- `/devmode setup` — Interactive wizard to configure OpenRouter API key and default dev mode.
-
----
-
-## Configuration
-
-Credentials and defaults can be configured globally (`~/.omp/devmode-guard.json`) or per-project (`.omp-devmode.json`). It also automatically reuses existing OpenRouter keys configured in `~/.omp/subagent-router.json` or `OPENROUTER_API_KEY`.
+- `/devmode` or `/devmode status` — Check current mode and Jev judge status.
+- `/devmode frontend` — Switch to Frontend-only mode.
+- `/devmode backend` — Switch to Backend-only mode.
+- `/devmode both` — Allow all modifications.
+- `/devmode verify` — Run git diff boundary check against the active mode using Jev.
+- `/devmode setup` — Interactive configuration wizard.
 
 ---
 

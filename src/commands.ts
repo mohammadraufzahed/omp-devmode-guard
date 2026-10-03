@@ -1,11 +1,12 @@
 import type { ExtensionAPI, ExtensionCommandContext } from "@oh-my-pi/pi-coding-agent";
 import { state } from "./state.js";
 import { loadConfig, saveGlobalConfig, saveProjectConfig } from "./config.js";
+import { checkGitDiffBoundaries } from "./diff-checker.js";
 import type { DevMode } from "./types.js";
 
 export function registerDevModeCommands(pi: ExtensionAPI): void {
   pi.registerCommand("devmode", {
-    description: "Manage development mode guard (frontend, backend, both) with Jev boundary detection (/devmode [status|frontend|backend|both|setup])",
+    description: "Manage development mode guard (frontend, backend, both) with Jev boundary detection (/devmode [status|frontend|backend|both|verify|setup])",
     handler: async (args: string, ctx: ExtensionCommandContext) => {
       const parts = args.trim().split(/\s+/);
       const sub = parts[0]?.toLowerCase();
@@ -28,7 +29,28 @@ export function registerDevModeCommands(pi: ExtensionAPI): void {
         const mode = sub as DevMode;
         state.setMode(mode);
         saveProjectConfig(ctx.cwd, { mode });
+        ctx.ui.setStatus("devmode", `[DEV: ${mode.toUpperCase()}]`);
         ctx.ui.notify(`Development mode set to: [${mode.toUpperCase()}]`, "info");
+        return;
+      }
+
+      if (sub === "verify" || sub === "diff") {
+        const mode = state.getMode();
+        if (mode === "both") {
+          ctx.ui.notify("Active mode is BOTH. All modified files are permitted.", "info");
+          return;
+        }
+
+        ctx.ui.notify(`Checking git diff against ${mode.toUpperCase()} boundary with Jev judge...`, "info");
+        const cfg = loadConfig(ctx.cwd);
+        const result = await checkGitDiffBoundaries(ctx.cwd, mode, ctx, cfg);
+
+        if (result.passed) {
+          ctx.ui.notify(`Boundary check PASSED: All ${result.totalModified} modified files respect ${mode.toUpperCase()} mode.`, "info");
+        } else {
+          const list = result.violations.map((v) => `• ${v.file} (${v.category.toUpperCase()})`).join("\n");
+          ctx.ui.notify(`Boundary check FAILED! Found violations:\n${list}`, "error");
+        }
         return;
       }
 
@@ -37,7 +59,7 @@ export function registerDevModeCommands(pi: ExtensionAPI): void {
         return;
       }
 
-      ctx.ui.notify("Usage: /devmode [status | frontend | backend | both | setup]", "warning");
+      ctx.ui.notify("Usage: /devmode [status | frontend | backend | both | verify | setup]", "warning");
     },
   });
 }
@@ -74,6 +96,7 @@ async function runSetupWizard(ctx: ExtensionCommandContext): Promise<void> {
   saveGlobalConfig({ openrouterApiKey });
   saveProjectConfig(ctx.cwd, { mode: selectedMode, openrouterApiKey });
   state.setMode(selectedMode);
+  ctx.ui.setStatus("devmode", `[DEV: ${selectedMode.toUpperCase()}]`);
 
   ctx.ui.notify(
     `DevMode Guard configured successfully!\nActive Mode: [${selectedMode.toUpperCase()}]. Jev judge is active.`,

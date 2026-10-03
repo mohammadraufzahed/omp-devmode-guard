@@ -1,5 +1,35 @@
 const SECTION_HEADER_REGEX = /^\[([^#\r\n\]]+)#/gm;
 
+// Extract candidate paths affected by a shell command
+export function extractPathsFromBash(command: string): string[] {
+  const paths: string[] = [];
+  
+  // 1. Redirection operators (> >> 2> | tee)
+  const redirectMatches = command.matchAll(/(?:>|>>|tee\s+(?:-a\s+)?)\s*([^\s;&|]+)/g);
+  for (const m of redirectMatches) {
+    if (m[1] && !m[1].startsWith("-") && m[1] !== "/dev/null") {
+      paths.push(m[1].replace(/['"]/g, ""));
+    }
+  }
+
+  // 2. Common mutating commands: sed, rm, mv, cp, touch, git checkout/restore
+  const cmdMatches = command.matchAll(
+    /\b(?:rm|mv|cp|touch|truncate|sed\s+-i[^\s]*|git\s+(?:checkout|restore))\s+([^\s;&|]+(?:\s+[^\s;&|]+)*)/g
+  );
+  for (const m of cmdMatches) {
+    if (m[1]) {
+      const args = m[1].split(/\s+/);
+      for (const arg of args) {
+        if (!arg.startsWith("-") && arg !== "/dev/null" && arg !== "HEAD") {
+          paths.push(arg.replace(/['"]/g, ""));
+        }
+      }
+    }
+  }
+
+  return paths;
+}
+
 export function extractTargetPaths(toolName: string, input: Record<string, unknown>): string[] {
   const paths: string[] = [];
 
@@ -31,6 +61,10 @@ export function extractTargetPaths(toolName: string, input: Record<string, unkno
           paths.push(p);
         }
       }
+    }
+  } else if (toolName === "bash") {
+    if (typeof input.command === "string") {
+      paths.push(...extractPathsFromBash(input.command));
     }
   }
 

@@ -1,0 +1,36 @@
+{
+  "name": "omp-devmode-guard",
+  "version": "1.0.0",
+  "description": "omp-exclusive extension enforcing frontend/backend development mode boundaries using Jev judge",
+  "main": "dist/index.js",
+  "module": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "type": "module",
+  "keywords": [
+    "omp",
+    "omp-plugin",
+    "omp-extension",
+    "development-mode",
+    "frontend",
+    "backend",
+    "jev",
+    "guard"
+  ],
+  "author": "Mohammad Raufzahed",
+  "license": "MIT",
+  "omp": {
+    "extensions": [
+      "./dist/index.js"
+    ]
+  },
+  "scripts": {
+    "build": "tsc",
+    "watch": "tsc --watch",
+    "test": "node --test dist/**/*.test.js"
+  },
+  "devDependencies": {
+    "@oh-my-pi/pi-coding-agent": "latest",
+    "@types/node": "^22.10.0",
+    "typescript": "^5.7.0"
+  }
+}

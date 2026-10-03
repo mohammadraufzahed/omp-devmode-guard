@@ -2,25 +2,64 @@ import type { ExtensionAPI, ExtensionCommandContext } from "@oh-my-pi/pi-coding-
 import { state } from "./state.js";
 import { loadConfig, saveGlobalConfig, saveProjectConfig } from "./config.js";
 import { checkGitDiffBoundaries } from "./diff-checker.js";
+import { classifyFileWithJev } from "./classifier.js";
+import { matchingScenarios } from "./policy.js";
 import type { DevMode } from "./types.js";
 
 export function registerDevModeCommands(pi: ExtensionAPI): void {
   pi.registerCommand("devmode", {
-    description: "Manage development mode guard (frontend, backend, both) with Jev boundary detection (/devmode [status|frontend|backend|both|verify|setup])",
+    description: "Configure modes and inspect scenario policies (/devmode status|explain|test|verify)",
     handler: async (args: string, ctx: ExtensionCommandContext) => {
       const parts = args.trim().split(/\s+/);
       const sub = parts[0]?.toLowerCase();
 
       if (!sub || sub === "status") {
-        const currentMode = state.getMode();
         const cfg = loadConfig(ctx.cwd);
-        const keyStatus = cfg.openrouterApiKey
-          ? `configured (${cfg.openrouterApiKey.slice(0, 10)}...)`
-          : "not configured (run /devmode setup)";
-
+        const keyStatus = cfg.openrouterApiKey ? "configured" : "not configured (run /devmode setup)";
         ctx.ui.notify(
-          `DevMode Guard Status:\n- Active Mode: [${currentMode.toUpperCase()}]\n- Jev Classifier (OpenRouter): ${keyStatus}`,
-          "info"
+          `DevMode Guard Status:\n- Active Mode: [${state.getMode().toUpperCase()}]\n- Jev Classifier (OpenRouter): ${keyStatus}\n- Scenarios: ${cfg.scenarios.length}`,
+          "info",
+        );
+        return;
+      }
+
+      if (sub === "explain" || sub === "policy") {
+        const scenarios = loadConfig(ctx.cwd).scenarios;
+        const listing = scenarios.length
+          ? scenarios.map((scenario) =>
+            `• ${scenario.id}${scenario.locked ? " [global/locked]" : " [project]"}\n  when: ${JSON.stringify(scenario.when)}\n  then: ${scenario.then.action}${scenario.then.message ? ` — ${scenario.then.message}` : ""}`,
+          ).join("\n")
+          : "No scenarios configured.";
+        ctx.ui.notify(`Policy scenarios (${scenarios.length}):\n${listing}\n\nGlobal: ~/.omp/agent/devmode.json\nProject: .omp/devmode.json`, "info");
+        return;
+      }
+
+      if (sub === "test") {
+        const filePath = args.trim().slice(sub.length).trim();
+        if (!filePath) {
+          ctx.ui.notify("Usage: /devmode test <file-path>", "warning");
+          return;
+        }
+        const cfg = loadConfig(ctx.cwd);
+        const category = await classifyFileWithJev(filePath, ctx, cfg);
+        const mode = state.getMode();
+        const matched = matchingScenarios(cfg.scenarios, {
+          event: "tool_call", mode, tool: "edit", agent: ctx.agent?.name, category, path: filePath,
+        });
+        const explicitDecision = matched.find((item) => item.action === "block") ??
+          matched.find((item) => item.action === "ask") ??
+          matched.find((item) => item.action === "allow");
+        const boundaryViolation = (category === "unknown" && mode !== "both") ||
+          (mode === "frontend" && category === "backend") ||
+          (mode === "backend" && category === "frontend");
+        const result = explicitDecision?.action === "block" ? "BLOCK" :
+          explicitDecision?.action === "ask" ? "ASK" :
+          explicitDecision?.action === "allow" ? "ALLOW (scenario override)" :
+          boundaryViolation ? "ASK/BLOCK (mode boundary)" : "ALLOW";
+        const detail = matched.map(({ scenario, action }) => `${scenario.id}: ${action}`).join("\n");
+        ctx.ui.notify(
+          `Policy test: ${filePath}\nJev category: ${category}\nMode: ${mode}\nEffective result: ${result}\nMatching edit scenarios:\n${detail || "none"}`,
+          result.startsWith("BLOCK") || result.startsWith("ASK") ? "warning" : "info",
         );
         return;
       }
@@ -92,9 +131,9 @@ async function runSetupWizard(ctx: ExtensionCommandContext): Promise<void> {
     selectedMode = "backend";
   }
 
-  // Save globally and in project
+  // Keep credentials global; only write the default mode to project config.
   saveGlobalConfig({ openrouterApiKey });
-  saveProjectConfig(ctx.cwd, { mode: selectedMode, openrouterApiKey });
+  saveProjectConfig(ctx.cwd, { mode: selectedMode });
   state.setMode(selectedMode);
   ctx.ui.setStatus("devmode", `[DEV: ${selectedMode.toUpperCase()}]`);
 

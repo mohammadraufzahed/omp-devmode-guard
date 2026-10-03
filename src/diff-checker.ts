@@ -3,6 +3,7 @@ import * as util from "node:util";
 import type { ExtensionContext } from "@oh-my-pi/pi-coding-agent";
 import type { DevMode, DevModeConfig } from "./types.js";
 import { classifyFileWithJev } from "./classifier.js";
+import { decisiveScenario, matchingScenarios } from "./policy.js";
 
 const exec = util.promisify(child_process.exec);
 
@@ -42,13 +43,23 @@ export async function checkGitDiffBoundaries(
 
     for (const file of uniqueFiles) {
       const category = await classifyFileWithJev(file, ctx, config);
-      if (category === "shared") {
+      const rule = decisiveScenario(matchingScenarios(config.scenarios, {
+        event: "tool_call",
+        mode,
+        tool: "edit",
+        category,
+        path: file,
+      }));
+      if (rule?.action === "block" || rule?.action === "ask") {
+        violations.push({ file, category: `scenario:${rule.scenario.id}` });
+      } else if (rule?.action === "allow") {
         continue;
-      }
-
-      if (mode === "frontend" && category === "backend") {
+      } else if (category === "unknown") {
         violations.push({ file, category });
-      } else if (mode === "backend" && category === "frontend") {
+      } else if (
+        (mode === "frontend" && category === "backend") ||
+        (mode === "backend" && category === "frontend")
+      ) {
         violations.push({ file, category });
       }
     }

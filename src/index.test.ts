@@ -3,6 +3,53 @@ import assert from "node:assert";
 import { extractTargetPaths, extractPathsFromBash } from "./parser.js";
 import { state } from "./state.js";
 import { getDevModeSystemPrompt } from "./prompt.js";
+import { decisiveScenario, matchingScenarios } from "./policy.js";
+import type { PolicyScenario } from "./types.js";
+
+describe("scenario policies", () => {
+  const scenarios: PolicyScenario[] = [
+    {
+      id: "block-migrations",
+      when: { event: "tool_call", tool: "bash", path: "**/migrations/*", mode: "frontend" },
+      then: { action: "block", message: "Migration work is out of scope." },
+      locked: true,
+    },
+    {
+      id: "inject-frontend-guidance",
+      when: { event: "before_agent_start", mode: "frontend", promptContains: "form" },
+      then: { action: "inject_context", message: "Prefer existing form components." },
+    },
+  ];
+
+  it("matches scoped event, mode, tool and glob path conditions", () => {
+    const result = matchingScenarios(scenarios, {
+      event: "tool_call",
+      mode: "frontend",
+      tool: "bash",
+      path: "app/db/migrations/001.sql",
+    });
+    assert.deepStrictEqual(result.map(({ scenario }) => scenario.id), ["block-migrations"]);
+  });
+
+  it("matches prompt substring conditions and leaves nonmatching scenarios out", () => {
+    const result = matchingScenarios(scenarios, {
+      event: "before_agent_start",
+      mode: "frontend",
+      prompt: "Update the patient form",
+    });
+    assert.deepStrictEqual(result.map(({ scenario }) => scenario.id), ["inject-frontend-guidance"]);
+  });
+
+  it("gives a block precedence over ask and allow", () => {
+    const matches = matchingScenarios([
+      { id: "allow", when: { event: "tool_call" }, then: { action: "allow" } },
+      { id: "ask", when: { event: "tool_call" }, then: { action: "ask" } },
+      { id: "block", when: { event: "tool_call" }, then: { action: "block" } },
+    ], { event: "tool_call", mode: "both" });
+    assert.strictEqual(decisiveScenario(matches)?.scenario.id, "block");
+  });
+});
+
 
 describe("extractTargetPaths", () => {
   it("extracts path from write tool", () => {
